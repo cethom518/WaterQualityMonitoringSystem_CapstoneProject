@@ -1,0 +1,81 @@
+#include <WiFi.h>
+#include <esp_now.h>
+
+// UART from Nano
+// Use Serial2 or Serial1 depending on pins wired
+// Example uses Serial2 on default pins 16 (RX), 17 (TX)
+HardwareSerial nanoSerial(2);
+
+typedef struct {
+  char line[128];
+} DataPacket;
+
+uint8_t handheldPeerAddress[] = { 0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC }; // TODO: replace with real MAC
+
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  // Optional: debug
+  // Serial.print("ESP-NOW send status: ");
+  // Serial.println(status == ESP_NOW_SEND_SUCCESS ? "OK" : "FAIL");
+}
+
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+  // Data from Handheld (e.g., CMD:START / CMD:STOP)
+  String cmd;
+  for (int i = 0; i < len; i++) {
+    cmd += (char)incomingData[i];
+  }
+  cmd.trim();
+
+  // Forward command to Nano over UART
+  nanoSerial.println(cmd);
+}
+
+void setupESPNow() {
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("[BASE] Error initializing ESP-NOW");
+    return;
+  }
+
+  esp_now_register_send_cb(onDataSent);
+  esp_now_register_recv_cb(onDataRecv);
+
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, handheldPeerAddress, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("[BASE] Failed to add peer");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);      // Debug
+  nanoSerial.begin(9600);    // Must match the Nano side
+
+  setupESPNow();
+
+  Serial.println("[BASE] ESP32 Base Station ready.");
+}
+
+void loop() {
+  // Check for lines from Nano and relay to Handheld over ESP-NOW
+  if (nanoSerial.available()) {
+    String line = nanoSerial.readStringUntil('\n');
+    line.trim();
+
+    if (line.length() > 0) {
+      DataPacket packet;
+      memset(&packet, 0, sizeof(packet));
+      line.toCharArray(packet.line, sizeof(packet.line));
+
+      esp_err_t result = esp_now_send(handheldPeerAddress,
+                                      (uint8_t *)&packet,
+                                      sizeof(packet));
+      if (result != ESP_OK) {
+        Serial.println("[BASE] ESP-NOW send failed");
+      }
+    }
+  }
+}
