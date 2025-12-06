@@ -1,0 +1,196 @@
+#include <Wire.h>
+#include <SPI.h>
+#include <SD.h>
+#include <RTClib.h>
+
+// TODO: adjust these to your wiring
+const int SD_CS_PIN = 10;
+const int PH_PIN    = A0;
+const int EC_PIN    = A1;
+const int TURB_PIN  = A2;
+const int TEMP_PIN  = A3;
+
+// If you used SoftwareSerial for ESP32 link, add it here
+// #include <SoftwareSerial.h>
+// SoftwareSerial espSerial(2, 5); // RX, TX (example)
+
+RTC_DS1307 rtc;
+File logFile;
+
+bool loggingActive = false;
+String currentSessionFile = "";
+
+void setup() {
+  Serial.begin(9600);          // Debug over USB
+  // espSerial.begin(9600);    // UART to ESP32 if using SoftwareSerial
+
+  initRTC();
+  initSD();
+
+  // Optional: small delay to let everything settle
+  delay(1000);
+}
+
+void loop() {
+  // 1) Check for commands from Base/ESP32 (via Serial or SoftwareSerial)
+  handleCommands();
+
+  // 2) If logging active, read sensors and log at interval
+  if (loggingActive) {
+    static unsigned long lastLogMs = 0;
+    const unsigned long LOG_INTERVAL_MS = 2000;
+
+    if (millis() - lastLogMs >= LOG_INTERVAL_MS) {
+      lastLogMs = millis();
+      logMeasurement();
+    }
+  }
+}
+
+// ---------------- RTC & SD SETUP ----------------
+
+void initRTC() {
+  if (!rtc.begin()) {
+    Serial.println(F("[NANO] RTC not found!"));
+    return;
+  }
+  if (!rtc.isrunning()) {
+    Serial.println(F("[NANO] RTC not running, set time if needed."));
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+  Serial.println(F("[NANO] RTC OK."));
+}
+
+void initSD() {
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println(F("[NANO] SD init failed!"));
+    return;
+  }
+  Serial.println(F("[NANO] SD.begin OK."));
+}
+
+// ------------- COMMAND HANDLING -----------------
+
+void handleCommands() {
+  // For now, listen on USB Serial (you can later switch to espSerial)
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "CMD:START") {
+      startSession();
+    } else if (cmd == "CMD:STOP") {
+      stopSession();
+    }
+  }
+}
+
+void startSession() {
+  if (loggingActive) return;
+
+  DateTime now = rtc.now();
+  char filename[32];
+  // Example: LOG_YYYYMMDD_HHMM.csv
+  snprintf(filename, sizeof(filename),
+           "LOG_%04d%02d%02d_%02d%02d.csv",
+           now.year(), now.month(), now.day(),
+           now.hour(), now.minute());
+
+  logFile = SD.open(filename, FILE_WRITE);
+  if (!logFile) {
+    Serial.println(F("[NANO] Failed to open log file!"));
+    return;
+  }
+
+  currentSessionFile = String(filename);
+  loggingActive = true;
+
+  // Write CSV header
+  logFile.println(F("timestamp,pH,EC,TDS,turbidity,tempC"));
+  logFile.flush();
+
+  Serial.print(F("[NANO] Logging started: "));
+  Serial.println(currentSessionFile);
+}
+
+void stopSession() {
+  if (!loggingActive) return;
+
+  loggingActive = false;
+
+  if (logFile) {
+    logFile.close();
+  }
+
+  Serial.print(F("[NANO] Logging stopped: "));
+  Serial.println(currentSessionFile);
+  currentSessionFile = "";
+}
+
+// ------------- MEASUREMENT & LOGGING ------------
+
+void logMeasurement() {
+  DateTime now = rtc.now();
+  String timestamp = formatTimestamp(now);
+
+  float pH       = readPH();
+  float ec       = readEC();
+  float tds      = readTDS(ec);
+  float turb     = readTurbidity();
+  float tempC    = readTemperature();
+
+  String line = timestamp + "," +
+                String(pH, 2) + "," +
+                String(ec, 2) + "," +
+                String(tds, 2) + "," +
+                String(turb, 2) + "," +
+                String(tempC, 2);
+
+  if (logFile) {
+    logFile.println(line);
+    logFile.flush();
+  }
+
+  // Also send over UART to Base (replace Serial with espSerial if needed)
+  Serial.println(line);
+}
+
+String formatTimestamp(const DateTime &dt) {
+  char buf[32];
+  snprintf(buf, sizeof(buf),
+           "%04d-%02d-%02d %02d:%02d:%02d",
+           dt.year(), dt.month(), dt.day(),
+           dt.hour(), dt.minute(), dt.second());
+  return String(buf);
+}
+
+// ----------- SENSOR STUBS (CALIBRATION LATER) -----------
+
+float readPH() {
+  int raw = analogRead(PH_PIN);
+  // TODO: apply calibration
+  return raw * (14.0 / 1023.0);
+}
+
+float readEC() {
+  int raw = analogRead(EC_PIN);
+  // TODO: real EC conversion
+  return raw;
+}
+
+float readTDS(float ec) {
+  // TODO: proper TDS equation
+  return ec * 0.5;
+}
+
+float readTurbidity() {
+  int raw = analogRead(TURB_PIN);
+  // TODO: map raw value to NTU
+  return raw;
+}
+
+float readTemperature() {
+  int raw = analogRead(TEMP_PIN);
+  // TODO: sensor-specific conversion
+  return raw * (50.0 / 1023.0);
+}
