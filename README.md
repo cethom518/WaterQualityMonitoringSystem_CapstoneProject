@@ -140,9 +140,7 @@ This project is released under the **MIT License**, permitting open-source use a
 ---
 
 ## ✨ Author  
-**Cameron Thomas**  
+Cameron Thomas
 Embedded Systems & Robotics Engineer (in training)  
 U.S. Army Veteran | Middle Tennessee State University  
-LinkedIn: *(Add your link here)*  
-GitHub: *(Add your link here)*
-
+LinkedIn: www.linkedin.com/in/cethom5471
