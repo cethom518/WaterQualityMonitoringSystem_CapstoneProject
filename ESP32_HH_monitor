@@ -1,0 +1,76 @@
+#include <WiFi.h>
+#include <esp_now.h>
+
+// MAC of Base Station (fill this in)
+uint8_t basePeerAddress[] = { 0x24, 0x6F, 0x28, 0x11, 0x22, 0x33 }; // TODO: real MAC
+
+typedef struct {
+  char line[128];
+} DataPacket;
+
+void onDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
+  DataPacket packet;
+  memcpy(&packet, incomingData, sizeof(packet));
+
+  String line = String(packet.line);
+  line.trim();
+
+  // For now, just print. Later: parse CSV and show on display.
+  Serial.print("[HH] RX: ");
+  Serial.println(line);
+
+  // TODO: update OLED/TFT display here
+}
+
+void setupESPNow() {
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("[HH] Error initializing ESP-NOW");
+    return;
+  }
+
+  esp_now_register_recv_cb(onDataRecv);
+
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, basePeerAddress, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("[HH] Failed to add peer");
+  }
+}
+
+void sendCommand(const String &cmd) {
+  DataPacket packet;
+  memset(&packet, 0, sizeof(packet));
+  cmd.toCharArray(packet.line, sizeof(packet.line));
+
+  esp_err_t result = esp_now_send(basePeerAddress,
+                                  (uint8_t *)&packet,
+                                  sizeof(packet));
+  if (result != ESP_OK) {
+    Serial.println("[HH] ESP-NOW send failed");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  setupESPNow();
+
+  Serial.println("[HH] Handheld ready.");
+  // TODO: init OLED/TFT, buttons, etc.
+}
+
+void loop() {
+  // TEMP TEST: send CMD:START/CMD:STOP from Serial monitor
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.length() > 0) {
+      sendCommand(cmd);
+    }
+  }
+
+  // Later: read hardware buttons and send CMD:START/CMD:STOP automatically.
+}
